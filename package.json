@@ -1,0 +1,43 @@
+{
+  "name": "omp-auto-mode",
+  "version": "0.1.0",
+  "description": "Auto mode for oh-my-pi: an LLM answers the tool-approval prompts it can clearly allow and hands every other one back to you.",
+  "type": "module",
+  "license": "MIT",
+  "author": "OneAbodFTW",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OneAbodFTW/omp-auto-mode.git"
+  },
+  "homepage": "https://github.com/OneAbodFTW/omp-auto-mode#readme",
+  "bugs": "https://github.com/OneAbodFTW/omp-auto-mode/issues",
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "omp-extension",
+    "auto-mode",
+    "permissions",
+    "approvals",
+    "coding-agent"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "omp": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-ai": "*",
+    "@oh-my-pi/pi-catalog": "*",
+    "@oh-my-pi/pi-coding-agent": ">=18.11.3"
+  },
+  "peerDependenciesMeta": {
+    "@oh-my-pi/pi-ai": { "optional": true },
+    "@oh-my-pi/pi-catalog": { "optional": true },
+    "@oh-my-pi/pi-coding-agent": { "optional": true }
+  }
+}
