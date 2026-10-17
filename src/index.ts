@@ -50,6 +50,7 @@ import type {
 	ExtensionApprovalAnswer,
 	ExtensionUIDialogOptions,
 } from "@oh-my-pi/pi-coding-agent";
+import { wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 
 const REVIEWER_MODEL = process.env.OMP_AUTO_MODE_MODEL?.trim() || "anthropic/claude-sonnet-5-5";
 const POLICY_FILE = path.join(os.homedir(), ".omp", "agent", "auto-mode-policy.md");
@@ -373,8 +374,23 @@ async function review(
 	}
 }
 
+/** The reviewer's note right under the "Allow tool:" title, ahead of the call details. */
 function annotate(prompt: ExtensionApprovalPrompt, line: string): ExtensionApprovalPrompt {
-	return { full: `${prompt.full}\n${line}`, compact: `${prompt.compact}\n${line}` };
+	const [title = "", ...details] = prompt.full.split("\n");
+	return { full: [title, line, "", ...details].join("\n"), compact: prompt.compact };
+}
+
+/**
+ * The dialog opens on `compact` (one clipped row per line) and only wraps `full` behind the expand
+ * key, with no way to start expanded. Handing it every detail pre-wrapped to the terminal width
+ * shows the whole call up front; Page Up/Down scroll anything past the dialog's row limit.
+ */
+function showInFull(prompt: ExtensionApprovalPrompt): ExtensionApprovalPrompt {
+	// The dialog body is the editor width minus its 4-column frame; keep a little slack.
+	const width = Math.max(20, (process.stdout.columns || 100) - 6);
+	const [title = "", ...details] = prompt.full.split("\n");
+	const wrapped = details.flatMap(line => (line === "" ? [""] : wrapTextWithAnsi(line, width)));
+	return { ...prompt, compact: [title, ...wrapped].join("\n") };
 }
 
 export default function autoMode(pi: ExtensionAPI) {
@@ -413,7 +429,7 @@ export default function autoMode(pi: ExtensionAPI) {
 		): Promise<ExtensionApprovalAnswer> => {
 			pi.events.emit("herdr:blocked", { active: true, label });
 			try {
-				return await original(prompt, options);
+				return await original(showInFull(prompt), options);
 			} finally {
 				pi.events.emit("herdr:blocked", { active: false });
 			}

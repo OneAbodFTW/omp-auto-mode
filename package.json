@@ -33,11 +33,13 @@
   "peerDependencies": {
     "@oh-my-pi/pi-ai": "*",
     "@oh-my-pi/pi-catalog": "*",
-    "@oh-my-pi/pi-coding-agent": ">=18.11.3"
+    "@oh-my-pi/pi-coding-agent": ">=18.11.3",
+    "@oh-my-pi/pi-tui": "*"
   },
   "peerDependenciesMeta": {
     "@oh-my-pi/pi-ai": { "optional": true },
     "@oh-my-pi/pi-catalog": { "optional": true },
-    "@oh-my-pi/pi-coding-agent": { "optional": true }
+    "@oh-my-pi/pi-coding-agent": { "optional": true },
+    "@oh-my-pi/pi-tui": { "optional": true }
   }
 }
