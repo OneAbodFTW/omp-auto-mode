@@ -5,7 +5,7 @@ Auto mode for [oh-my-pi](https://github.com/can1357/oh-my-pi). When omp asks you
 - **allow**: the call runs without interrupting you, and a short note says why.
 - **escalate**: the normal approval prompt opens, with the reviewer's reason added.
 
-The reviewer can only allow. It never denies anything for you: every call it does not clearly allow comes back to you, so you stay in control.
+The reviewer can only allow. Every call it does not clearly allow comes back to you. File guards also ask you directly before sensitive file access, including calls OMP's approval mode would otherwise allow without a prompt.
 
 ## Install
 
@@ -13,13 +13,26 @@ The reviewer can only allow. It never denies anything for you: every call it doe
 omp plugin install github:OneAbodFTW/omp-auto-mode
 ```
 
-Needs omp 18.11.3 or newer. Auto mode reviews the prompts omp already raises, so use an approval mode that asks, for example:
+Needs omp 18.12.6 or newer. Auto mode reviews the prompts omp already raises, so use an approval mode that asks, for example:
 
 ```yaml
 # ~/.omp/agent/config.yml
 tools:
   approvalMode: write
 ```
+
+`write` mode still allows ordinary project file reads and writes without model review. The file guards below run independently of that tier setting. To review other file calls too, set OMP's per-tool `tools.approval.<tool>` setting to `prompt`. An existing OMP policy may request a second approval after a file-guard approval; neither layer overrides a deny rule.
+
+## File guards
+
+In sessions with an approval UI, these go straight to you, without asking the reviewer model:
+
+- File reads that target known secret paths, such as `.env`, private keys, credential stores and OMP state. Public key files and `.env.example` / `.env.sample` / `.env.template` are excluded. Reading a directory's filenames remains allowed.
+- Writes outside the current working directory, writes to agent/repository configuration, and writes to Auto Mode's installed source or active agent directory. The policy file is protected even if it is inside the project.
+- Content searches over directories or glob scopes, which may include secret files. Narrow searches of ordinary individual files remain allowed; filename-only `glob` calls are unaffected.
+- File operations with unresolved targets or unsupported target formats. Edit targets and rename destinations are parsed with OMP's native edit parser.
+
+Targets are checked lexically and after resolving symlinks, including dangling links used for new files. A file-guard approval covers one call. Cancelling or declining it blocks that call. These guards check tool requests, not every filesystem operation: arbitrary extensions, shell commands and subprocesses still need an OS sandbox for confinement.
 
 ## What gets allowed
 
@@ -34,26 +47,30 @@ Always handed to you without asking the model:
 - bash commands omp flags as a critical pattern;
 - provider computer-use safety checks.
 
-If the reviewer fails (no model, no API key, timeout, unreadable reply), the prompt comes to you, so a broken reviewer behaves like plain `write` mode.
+If the reviewer fails (no model, no API key, timeout, unreadable or incomplete reply), the prompt comes to you. A provider that ignores cancellation is still bounded by the review timeout.
+
+OMP's prompt does not include a call ID and can abbreviate arguments. Auto Mode correlates approval events with the original persisted tool call and supplies its complete arguments to the reviewer. Approvals without a matching call, and concurrent approvals for the same tool that cannot be distinguished, always go to you. Critical patterns and provider safety checks retain their mandatory human path.
 
 An approval covers that one call only. Auto mode never answers "allow for this session".
 
 ## What the reviewer sees
 
-- Every message you typed this session. Agent-generated and synthetic messages are left out.
-- The agent's non-read tool calls: tool name and arguments, with shell comments and the agent's stated intent removed.
-- Facts gathered by the extension itself: working directory, repo root, branch, the git remotes present when the session started, and `git status` before commands that can discard work.
-- The pending approval prompt.
+- Complete text from your messages on the current session branch. Agent-generated and synthetic messages are left out; images are not sent to the reviewer.
+- The agent's attempted non-read tool calls, with their complete arguments. The reviewer is told that a historical call does not prove successful execution.
+- Facts gathered by the extension itself: working directory, repo root, branch, git remotes captured at session start, and `git status` including ignored paths. Git metadata is data, not trusted instructions or proof that overwriting a file is safe.
+- The exact pending tool name and arguments, plus OMP's human-readable approval prompt. Comments and heredocs are preserved.
 
-It never sees the agent's prose or tool output, so instructions planted in files or command output cannot talk it into approving.
+The request is serialized as JSON so strings cannot create fake transcript roles. It excludes agent prose and tool results, but arguments and repository metadata remain potential prompt-injection inputs. Model review is not a security boundary.
+
+User messages and arguments are never clipped or silently dropped. If the complete request and operator policy exceed 60,000 characters, Auto Mode asks you instead of reviewing partial context. This can increase human prompts in long sessions.
 
 ## Configuration
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `OMP_AUTO_MODE_MODEL` | `anthropic/claude-sonnet-5-5` | Reviewer model: a model selector or role alias. Falls back to the session model when it cannot be resolved. |
-| `OMP_AUTO_MODE_LOG` | unset | Path to a `.jsonl` file. Each review appends its request, verdict, model and latency. |
-| `~/.omp/agent/auto-mode-policy.md` | absent | Your own rules, appended to the reviewer's instructions as trusted operator policy. |
+| `OMP_AUTO_MODE_LOG` | unset | Path to a `.jsonl` file. Each review appends its full request, verdict, model and latency. New files use mode `0600`. Logs can contain sensitive user text and arguments. |
+| `auto-mode-policy.md` in the active agent directory | absent | Your own rules, captured once at session start and appended as trusted operator policy. Defaults to `~/.omp/agent/auto-mode-policy.md`; respects OMP profiles and `PI_CODING_AGENT_DIR`. |
 
 Example policy:
 
@@ -62,11 +79,24 @@ Example policy:
 - Never allow anything that touches ~/work/prod-infra.
 ```
 
+Policy changes take effect in a new session or after reloading the extension. A missing file means no extra policy. An unreadable policy disables automatic approvals for that session. A tool call cannot rewrite the file and change the current session's snapshot.
+
 ## Scope
 
 - Interactive sessions only. Headless runs and subagents have no approval UI and keep omp's normal behaviour.
 - `cfg://` setting changes use a separate approval path and are not reviewed.
 - Works alongside Herdr: the pane shows as blocked only while a prompt is actually waiting for you, not while the reviewer decides.
+- Requires trusted peer extensions. It cannot constrain an extension's own I/O or guarantee checks after another extension revises an already inspected file request.
+- Network access is unaffected. A launcher such as an OMP adaptation of `pi-safe` provides a separate filesystem boundary; Auto Mode approval does not change its mount permissions.
+
+## Development
+
+```sh
+bun test
+bun run check
+```
+
+Tests use fake model completions and temporary files; no API keys or model requests are needed. `check` builds the extension with host-provided OMP packages left external. Runtime compatibility should also be checked in OMP when changing approval hooks or native edit parsing.
 
 ## License
 
