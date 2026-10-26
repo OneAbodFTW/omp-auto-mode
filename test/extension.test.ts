@@ -20,7 +20,11 @@ function harness(cwd = "/project") {
 	};
 	const ui: any = {
 		approve: async (prompt: any) => { dialogs.push(prompt); return human; },
-		select: async (full: string) => { dialogs.push({ full, compact: full }); return human === "once" ? "Approve" : "Deny"; },
+		select: async (full: string, choices: string[]) => {
+			dialogs.push({ full, compact: full, choices });
+			if (human === "directory") return choices.find(choice => choice.startsWith("Allow ordinary writes")) ?? "Deny";
+			return human === "once" ? "Approve" : "Deny";
+		},
 		notify: () => {}, setStatus: () => {},
 	};
 	const ctx: any = { cwd, hasUI: true, ui, sessionManager: { getSessionId: () => sessionId, getBranch: () => entries } };
@@ -196,5 +200,27 @@ describe("approval integration", () => {
 		await h.pending("1", "bash", { command: "printf hello" });
 		expect(await h.approve()).toBe("deny");
 		expect(h.dialogs[0].full).toContain("user instructions or tool history changed");
+	});
+	test("explicit directory approval covers later ordinary writes only in the same session", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "auto-mode-grants-"));
+		try {
+			const h = harness(path.join(root, "project"));
+			const first = { toolCallId: "1", toolName: "write", input: { path: path.join(root, "scratch/first.py") } };
+			h.setHuman("once");
+			expect(await h.emit("tool_call", first)).toBeUndefined();
+			h.setHuman("deny");
+			expect((await h.emit("tool_call", first)).block).toBe(true);
+			h.setHuman("directory");
+			expect(await h.emit("tool_call", first)).toBeUndefined();
+			h.setHuman("deny");
+			const count = h.dialogs.length;
+			expect(await h.emit("tool_call", { ...first, input: { path: path.join(root, "scratch/nested/next.py") } })).toBeUndefined();
+			expect(h.dialogs).toHaveLength(count);
+			expect((await h.emit("tool_call", { ...first, input: { path: path.join(root, "scratch/.env") } })).block).toBe(true);
+			expect(h.dialogs.at(-1).choices).toEqual(["Approve", "Deny"]);
+			h.setSession("session-2");
+			await h.emit("session_switch");
+			expect((await h.emit("tool_call", first)).block).toBe(true);
+		} finally { await rm(root, { recursive: true, force: true }); }
 	});
 });

@@ -1,6 +1,6 @@
 {
   "name": "omp-auto-mode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Auto mode for oh-my-pi: an LLM answers the tool-approval prompts it can clearly allow and hands every other one back to you.",
   "type": "module",
   "license": "MIT",

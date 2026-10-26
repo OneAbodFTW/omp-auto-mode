@@ -29,12 +29,14 @@ tools:
 
 In sessions with an approval UI, these go straight to you, without asking the reviewer model:
 
-- File reads that target known secret paths, such as `.env`, private keys, credential stores and OMP state. Public key files and `.env.example` / `.env.sample` / `.env.template` are excluded. Reading a directory's filenames remains allowed.
-- Writes outside the current working directory, writes to agent/repository configuration, and writes to Auto Mode's installed source or active agent directory. The policy file is protected even if it is inside the project.
+- File reads that target known secret paths, such as `.env`, private keys, credential stores and OMP state. Public key files, `.env.example` / `.env.sample` / `.env.template`, and the exact `~/.omp/plugins/package.json` dependency manifest are excluded. Symlinks to secret files remain guarded. Reading a directory's filenames remains allowed.
+- Writes outside the current working directory unless explicitly covered by a session directory grant, writes to agent/repository configuration, and writes to Auto Mode's installed source or active agent directory. The policy file is protected even if it is inside the project.
 - Content searches over directories or glob scopes, which may include secret files. Narrow searches of ordinary individual files remain allowed; filename-only `glob` calls are unaffected.
 - File operations with unresolved targets or unsupported target formats. Edit targets and rename destinations are parsed with OMP's native edit parser.
 
-Targets are checked lexically and after resolving symlinks, including dangling links used for new files. A file-guard approval covers one call. Cancelling or declining it blocks that call. These guards check tool requests, not every filesystem operation: arbitrary extensions, shell commands and subprocesses still need an OS sandbox for confinement.
+Targets are checked lexically and after resolving symlinks, including dangling links used for new files. **Approve** covers one call; cancelling or declining blocks it. Ordinary project-external writes also offer **Allow ordinary writes for this session: /exact/directory**. Only that explicit choice remembers the listed directories and their descendants for the current session; ordinary approvals never silently grant directory access. A new session or process clears those grants. `/tmp` is not automatically trusted.
+
+Directory grants do not bypass sensitive-file checks, repository/agent configuration, protected plugin source, unresolved paths or native OMP policies. Root/home-wide grants and grants through symlink aliases are not offered. Paths are rechecked after confirmation and on each later call; a link escaping the granted directory or a retargeted directory root still requires approval. These guards check tool requests, not every filesystem operation: arbitrary extensions, shell commands and subprocesses still need an OS sandbox for confinement.
 
 File guards use the current event's scoped dialog, so time spent waiting for the user does not consume OMP's 30-second extension-handler execution budget.
 
@@ -55,7 +57,7 @@ If the reviewer fails (no model, no API key, timeout, unreadable or incomplete r
 
 OMP's prompt does not include a call ID and can abbreviate arguments. Auto Mode correlates approval events with the original persisted tool call and supplies its complete arguments to the reviewer. Approvals without a matching call, and concurrent approvals for the same tool that cannot be distinguished, always go to you. Critical patterns and provider safety checks retain their mandatory human path.
 
-An approval covers that one call only. Auto mode never answers "allow for this session".
+A model approval covers that one call only. The model never grants session permissions; directory grants above require an explicit human choice.
 
 ## What the reviewer sees
 
@@ -115,6 +117,11 @@ omp plugin install "$PWD"
 ```
 
 The link loads local source changes in new OMP processes. Existing sessions retain their loaded code until their extensions are reloaded or the OMP process is restarted. Do not run the original and modified reviewers together. Before replacing an installation, keep a copy of its directory; `omp plugin install /absolute/path/to/backup` switches back without changing approval rules.
+
+### 0.1.2
+
+- Offer explicit session-scoped directory permission for ordinary external writes, without changing the meaning of one-call approval or bypassing sensitive paths and native policies.
+- Allow reading the exact plugin dependency manifest without treating all OMP state as public.
 
 ### 0.1.1
 
