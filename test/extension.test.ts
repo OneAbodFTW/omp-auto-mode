@@ -20,7 +20,8 @@ function harness(cwd = "/project") {
 	};
 	const ui: any = {
 		approve: async (prompt: any) => { dialogs.push(prompt); return human; },
-		select: async () => "Deny", notify: () => {}, setStatus: () => {},
+		select: async (full: string) => { dialogs.push({ full, compact: full }); return human === "once" ? "Approve" : "Deny"; },
+		notify: () => {}, setStatus: () => {},
 	};
 	const ctx: any = { cwd, hasUI: true, ui, sessionManager: { getSessionId: () => sessionId, getBranch: () => entries } };
 	const pi: any = {

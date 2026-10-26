@@ -171,9 +171,14 @@ export default function installAutoMode(pi: ExtensionAPI, dependencies: Dependen
 		const state = await session(ctx);
 		const guard = await fileGuardReason(event.toolName, event.input, guardOptions(ctx, state));
 		if (!guard) return;
-		const patch = patchUI(ctx);
+		patchUI(ctx);
 		const full = `Allow tool: ${event.toolName}\nAuto mode file guard: ${guard}\n\nOriginal arguments (untrusted data):\n${JSON.stringify(event.input, null, 2)}`;
-		const answer = await patch.askHuman({ full, compact: full });
-		if (answer !== "once") return { block: true, reason: `Auto mode file guard: ${guard}; user did not approve this call` };
+		// Use this handler's scoped dialog: OMP pauses its 30s execution budget
+		// while the user answers. The cached raw approval gate bypasses that pause.
+		pi.events.emit("herdr:blocked", { active: true, label: `Allow tool: ${event.toolName}` });
+		let answer: string | undefined;
+		try { answer = await ctx.ui.select(full, ["Approve", "Deny"]); }
+		finally { pi.events.emit("herdr:blocked", { active: false }); }
+		if (answer !== "Approve") return { block: true, reason: `Auto mode file guard: ${guard}; user did not approve this call` };
 	});
 }

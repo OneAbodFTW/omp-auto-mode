@@ -7,10 +7,12 @@ Auto mode for [oh-my-pi](https://github.com/can1357/oh-my-pi). When omp asks you
 
 The reviewer can only allow. Every call it does not clearly allow comes back to you. File guards also ask you directly before sensitive file access, including calls OMP's approval mode would otherwise allow without a prompt.
 
+This fork of [OneAbodFTW/omp-auto-mode](https://github.com/OneAbodFTW/omp-auto-mode) bounds historical tool evidence without clipping user restrictions or pending calls. It also preserves OMP's paused handler budget while a file-guard dialog waits for the user.
+
 ## Install
 
 ```sh
-omp plugin install github:OneAbodFTW/omp-auto-mode
+omp plugin install github:lialzm/omp-auto-mode
 ```
 
 Needs omp 18.12.6 or newer. Auto mode reviews the prompts omp already raises, so use an approval mode that asks, for example:
@@ -34,6 +36,8 @@ In sessions with an approval UI, these go straight to you, without asking the re
 
 Targets are checked lexically and after resolving symlinks, including dangling links used for new files. A file-guard approval covers one call. Cancelling or declining it blocks that call. These guards check tool requests, not every filesystem operation: arbitrary extensions, shell commands and subprocesses still need an OS sandbox for confinement.
 
+File guards use the current event's scoped dialog, so time spent waiting for the user does not consume OMP's 30-second extension-handler execution budget.
+
 ## What gets allowed
 
 - **Read-only calls** anywhere on the machine (reading, listing, searching, `git status/log/diff`, `--version`, public HTTP GETs), unless they would expose secrets such as `.env` files, private keys, cloud or registry credentials, tokens or shell history.
@@ -56,13 +60,15 @@ An approval covers that one call only. Auto mode never answers "allow for this s
 ## What the reviewer sees
 
 - Complete text from your messages on the current session branch. Agent-generated and synthetic messages are left out; images are not sent to the reviewer.
-- The agent's attempted non-read tool calls, with their complete arguments. The reviewer is told that a historical call does not prove successful execution.
+- Up to 24 of the most recent attempted non-read tool calls, with complete arguments, fitting the remaining input budget. The request reports total and omitted call counts. A historical call does not prove successful execution.
 - Facts gathered by the extension itself: working directory, repo root, branch, git remotes captured at session start, and `git status` including ignored paths. Git metadata is data, not trusted instructions or proof that overwriting a file is safe.
 - The exact pending tool name and arguments, plus OMP's human-readable approval prompt. Comments and heredocs are preserved.
 
 The request is serialized as JSON so strings cannot create fake transcript roles. It excludes agent prose and tool results, but arguments and repository metadata remain potential prompt-injection inputs. Model review is not a security boundary.
 
-User messages and arguments are never clipped or silently dropped. If the complete request and operator policy exceed 60,000 characters, Auto Mode asks you instead of reviewing partial context. This can increase human prompts in long sessions.
+The system prompt and request together are bounded to 60,000 characters. All user messages on the current branch, the operator policy, environment evidence and the exact pending call are retained intact. Historical tool calls fill the remaining budget newest-first; if the next call does not fit, selection stops rather than showing fragments or skipping to older calls.
+
+Omitted tool calls are explicitly marked as unknown evidence. The reviewer must ask you if the pending action depends on missing history, such as the contents of a previously written script. Self-contained read-only operations can still be reviewed in tool-heavy long sessions. If user messages, policy, environment or the pending call alone exceed the budget, Auto Mode still asks you; it never silently drops a user restriction or clips executable code.
 
 ## Configuration
 
@@ -97,6 +103,25 @@ bun run check
 ```
 
 Tests use fake model completions and temporary files; no API keys or model requests are needed. `check` builds the extension with host-provided OMP packages left external. Runtime compatibility should also be checked in OMP when changing approval hooks or native edit parsing.
+
+To develop this fork, clone it outside `~/.omp` (that directory is protected agent state), then link the checkout:
+
+```sh
+git clone https://github.com/lialzm/omp-auto-mode.git
+cd omp-auto-mode
+bun test
+bun run check
+omp plugin install "$PWD"
+```
+
+The link loads local source changes in new OMP processes. Existing sessions retain their loaded code until their extensions are reloaded or the OMP process is restarted. Do not run the original and modified reviewers together. Before replacing an installation, keep a copy of its directory; `omp plugin install /absolute/path/to/backup` switches back without changing approval rules.
+
+### 0.1.1
+
+- Bound historical tool evidence while preserving every user instruction and complete pending payload; include omission counts and require escalation when omitted evidence matters.
+- Count the system prompt in the input budget and distinguish oversized protected context from oversized environment evidence.
+- Route file-guard questions through OMP's handler-scoped dialog, allowing human answers after more than 30 seconds.
+
 
 ## License
 
