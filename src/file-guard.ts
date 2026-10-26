@@ -6,6 +6,7 @@ export interface FileGuardOptions {
 	home: string;
 	protectedPaths: string[];
 	inspectEdits: (input: Record<string, unknown>) => string[];
+	allowedWriteDirectories?: readonly string[];
 }
 
 function isWithin(root: string, target: string): boolean {
@@ -36,6 +37,9 @@ function sensitive(target: string, home: string): boolean {
 	if (/^\.env(?:\.|$)/.test(name) && !/^\.env\.(example|sample|template)$/.test(name)) return true;
 	if (/\.(pem|key|p12|pfx|keystore)$/.test(name)) return true;
 	if (/^(agent\.db(?:-wal|-shm)?|auth.*\.json|\.?(bash|zsh|python|node_repl)_history|fish_history|\.npmrc|\.pypirc|\.netrc|\.git-credentials)$/.test(name)) return true;
+	// Dependency metadata is not the agent credential store. The caller checks
+	// both lexical and canonical targets, so aliases to credentials stay guarded.
+	if (target === path.join(home, ".omp/plugins/package.json")) return false;
 	const privateRoots = [".aws", ".gnupg", ".azure", ".kube", ".config/gcloud", ".config/gh", ".omp"];
 	if (privateRoots.some(root => isWithin(path.join(home, root), target))) return true;
 	if (target === path.join(home, ".docker/config.json")) return true;
@@ -63,6 +67,38 @@ async function localTarget(raw: string, options: FileGuardOptions, reading: bool
 	return { lexical, canonical: await canonicalize(lexical) };
 }
 
+function fileTargets(name: string, args: Record<string, unknown>, options: FileGuardOptions): string[] {
+	if (name === "edit") return options.inspectEdits(args);
+	const raw = args.path ?? args.notebook_path;
+	return typeof raw === "string" ? [raw] : [];
+}
+
+/** Offer only exact, resolved parent directories for otherwise ordinary writes. */
+export async function directoryGrantTargets(name: string, input: unknown, options: FileGuardOptions): Promise<string[]> {
+	if (!["write", "edit", "notebook"].includes(name) || !input || typeof input !== "object" || Array.isArray(input)) return [];
+	try {
+		const directories = new Set<string>();
+		const cwd = await canonicalize(options.cwd);
+		for (const raw of fileTargets(name, input as Record<string, unknown>, options)) {
+			const { lexical, canonical } = await localTarget(raw, options, false);
+			if (isWithin(cwd, lexical) && isWithin(cwd, canonical)) continue;
+			// Do not turn a symlink alias into a grant on its unrelated destination.
+			if (lexical !== canonical) return [];
+			const directory = path.dirname(canonical);
+			if (directory === path.parse(directory).root || directory === await canonicalize(options.home)) return [];
+			directories.add(directory);
+		}
+		if (!directories.size) return [];
+		const grants = [...directories];
+		const reason = await fileGuardReason(name, input, {
+			...options, allowedWriteDirectories: [...options.allowedWriteDirectories ?? [], ...grants],
+		});
+		return reason ? [] : grants;
+	} catch {
+		return [];
+	}
+}
+
 /** These checks route to the human; they never ask an LLM to waive a file guard. */
 export async function fileGuardReason(
 	name: string,
@@ -76,14 +112,9 @@ export async function fileGuardReason(
 	// Public web reads retain OMP's existing behavior; this is not a network sandbox.
 	if (name === "read" && typeof args.path === "string" && /^https?:\/\//i.test(args.path)) return;
 	try {
-		let targets: string[];
-		if (name === "edit") {
-			targets = options.inspectEdits(args);
-		} else {
-			const raw = args.path ?? args.notebook_path;
-			targets = typeof raw === "string" ? [raw] : [];
-		}
+		const targets = fileTargets(name, args, options);
 		if (!targets.length) return "file targets could not be established";
+		let outside = false;
 		for (const raw of targets) {
 			if ((name === "grep" || name === "ast_edit") && /[*?\[\]{},\n]/.test(raw)) {
 				return "content search or edit scope requires human review";
@@ -99,8 +130,6 @@ export async function fileGuardReason(
 				if (name === "grep" && (!info || !info.isFile())) return "content search scope can include secret files or could not be established";
 				if (sensitive(lexical, options.home) || sensitive(canonical, home)) return "file contents may expose secrets or OMP credentials";
 			} else {
-				const cwd = await canonicalize(options.cwd);
-				if (!isWithin(cwd, lexical) || !isWithin(cwd, canonical)) return "write target is outside the current project directory";
 				for (const root of options.protectedPaths) {
 					if (isWithin(path.resolve(root), lexical) || isWithin(await canonicalize(root), canonical)) {
 						return "write target contains Auto Mode policy, configuration or extension code";
@@ -109,8 +138,20 @@ export async function fileGuardReason(
 				if ([lexical, canonical].some(target => target.split(path.sep).some(part => [".git", ".omp", ".pi"].includes(part)))) return "write target changes repository or agent configuration";
 				if (sensitive(lexical, options.home) || sensitive(canonical, home)) return "write target may contain secrets";
 				if (name === "ast_edit" && (await stat(canonical)).isDirectory()) return "recursive edit targets require human review";
+				const cwd = await canonicalize(options.cwd);
+				if (!isWithin(cwd, lexical) || !isWithin(cwd, canonical)) {
+					let granted = false;
+					for (const root of options.allowedWriteDirectories ?? []) {
+						if (await canonicalize(root) === root && isWithin(root, lexical) && isWithin(root, canonical)) {
+							granted = true;
+							break;
+						}
+					}
+					if (!granted) outside = true;
+				}
 			}
 		}
+		if (outside) return "write target is outside the current project directory";
 	} catch {
 		return "file target could not be resolved safely";
 	}

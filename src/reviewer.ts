@@ -92,20 +92,42 @@ export async function review(
 	try {
 		signal.throwIfAborted();
 		if (input.policy.error) return finish({ decision: "escalate", reason: input.policy.error });
-		const transcript = buildTranscript(ctx.sessionManager.getBranch());
-		request = JSON.stringify({ transcript, pending_call: input.call, approval_prompt: input.prompt });
-		const maxChars = options.maxChars ?? MAX_REVIEW_CHARS;
-		// Never drop a user restriction or hide part of a command to fit a budget.
-		if (request.length + input.policy.text.length > maxChars) {
-			return finish({ decision: "escalate", reason: "complete review context exceeds the input budget; nothing was truncated" });
-		}
-		request = JSON.stringify({ transcript, environment: await abortable(input.environment(), signal), pending_call: input.call, approval_prompt: input.prompt });
-		if (request.length + input.policy.text.length > maxChars) {
-			return finish({ decision: "escalate", reason: "complete review context exceeds the input budget; nothing was truncated" });
-		}
 		const system = input.policy.text
 			? `${SYSTEM_PROMPT}\n\n# Operator policy\nTrusted policy captured at session start; it refines the rules above.\n\n${input.policy.text}`
 			: SYSTEM_PROMPT;
+		const maxChars = options.maxChars ?? MAX_REVIEW_CHARS;
+		const transcript = buildTranscript(ctx.sessionManager.getBranch());
+		const users = transcript.filter(entry => entry.role === "user");
+		const totalTools = transcript.length - users.length;
+		const envelope = {
+			transcript: users,
+			history: { total_tool_calls: totalTools, omitted_tool_calls: totalTools },
+			environment: undefined as unknown,
+			pending_call: input.call,
+			approval_prompt: input.prompt,
+		};
+		// User restrictions, policy and the pending payload are never summarized or clipped.
+		if (JSON.stringify(envelope).length + system.length > maxChars) {
+			return finish({ decision: "escalate", reason: "user instructions, policy or pending call exceed the input budget; protected context was not truncated" });
+		}
+		envelope.environment = await abortable(input.environment(), signal);
+		if (JSON.stringify(envelope).length + system.length > maxChars) {
+			return finish({ decision: "escalate", reason: "environment and protected review context exceed the input budget; protected context was not truncated" });
+		}
+		// Retain whole recent calls, never fragments. Stop at the first oversized call
+		// rather than skipping it and presenting older evidence as the latest history.
+		const selected = new Set<number>();
+		let remaining = maxChars - system.length - JSON.stringify(envelope).length;
+		for (let i = transcript.length - 1; i >= 0 && selected.size < 24; i--) {
+			if (transcript[i].role !== "tool_call") continue;
+			const size = JSON.stringify(transcript[i]).length + 1;
+			if (size > remaining) break;
+			selected.add(i);
+			remaining -= size;
+		}
+		envelope.transcript = transcript.filter((entry, i) => entry.role === "user" || selected.has(i));
+		envelope.history.omitted_tool_calls = totalTools - selected.size;
+		request = JSON.stringify(envelope);
 		const reply = await abortable(complete(ctx, system, request, signal), signal);
 		signal.throwIfAborted();
 		if (reply.stopReason !== "stop") {

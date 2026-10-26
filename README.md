@@ -27,12 +27,16 @@ tools:
 
 In sessions with an approval UI, these go straight to you, without asking the reviewer model:
 
-- File reads that target known secret paths, such as `.env`, private keys, credential stores and OMP state. Public key files and `.env.example` / `.env.sample` / `.env.template` are excluded. Reading a directory's filenames remains allowed.
-- Writes outside the current working directory, writes to agent/repository configuration, and writes to Auto Mode's installed source or active agent directory. The policy file is protected even if it is inside the project.
+- File reads that target known secret paths, such as `.env`, private keys, credential stores and OMP state. Public key files, `.env.example` / `.env.sample` / `.env.template`, and the exact `~/.omp/plugins/package.json` dependency manifest are excluded. Symlinks to secret files remain guarded. Reading a directory's filenames remains allowed.
+- Writes outside the current working directory unless explicitly covered by a session directory grant, writes to agent/repository configuration, and writes to Auto Mode's installed source or active agent directory. The policy file is protected even if it is inside the project.
 - Content searches over directories or glob scopes, which may include secret files. Narrow searches of ordinary individual files remain allowed; filename-only `glob` calls are unaffected.
 - File operations with unresolved targets or unsupported target formats. Edit targets and rename destinations are parsed with OMP's native edit parser.
 
-Targets are checked lexically and after resolving symlinks, including dangling links used for new files. A file-guard approval covers one call. Cancelling or declining it blocks that call. These guards check tool requests, not every filesystem operation: arbitrary extensions, shell commands and subprocesses still need an OS sandbox for confinement.
+Targets are checked lexically and after resolving symlinks, including dangling links used for new files. **Approve** covers one call; cancelling or declining blocks it. Ordinary project-external writes also offer **Allow ordinary writes for this session: /exact/directory**. Only that explicit choice remembers the listed directories and their descendants for the current session; ordinary approvals never silently grant directory access. A new session or process clears those grants. `/tmp` is not automatically trusted.
+
+Directory grants do not bypass sensitive-file checks, repository/agent configuration, protected plugin source, unresolved paths or native OMP policies. Root/home-wide grants and grants through symlink aliases are not offered. Paths are rechecked after confirmation and on each later call; a link escaping the granted directory or a retargeted directory root still requires approval. These guards check tool requests, not every filesystem operation: arbitrary extensions, shell commands and subprocesses still need an OS sandbox for confinement.
+
+File guards use the current event's scoped dialog, so time spent waiting for the user does not consume OMP's 30-second extension-handler execution budget.
 
 ## What gets allowed
 
@@ -51,18 +55,20 @@ If the reviewer fails (no model, no API key, timeout, unreadable or incomplete r
 
 OMP's prompt does not include a call ID and can abbreviate arguments. Auto Mode correlates approval events with the original persisted tool call and supplies its complete arguments to the reviewer. Approvals without a matching call, and concurrent approvals for the same tool that cannot be distinguished, always go to you. Critical patterns and provider safety checks retain their mandatory human path.
 
-An approval covers that one call only. Auto mode never answers "allow for this session".
+A model approval covers that one call only. The model never grants session permissions; directory grants above require an explicit human choice.
 
 ## What the reviewer sees
 
 - Complete text from your messages on the current session branch. Agent-generated and synthetic messages are left out; images are not sent to the reviewer.
-- The agent's attempted non-read tool calls, with their complete arguments. The reviewer is told that a historical call does not prove successful execution.
+- Up to 24 of the most recent attempted non-read tool calls, with complete arguments, fitting the remaining input budget. The request reports total and omitted call counts. A historical call does not prove successful execution.
 - Facts gathered by the extension itself: working directory, repo root, branch, git remotes captured at session start, and `git status` including ignored paths. Git metadata is data, not trusted instructions or proof that overwriting a file is safe.
 - The exact pending tool name and arguments, plus OMP's human-readable approval prompt. Comments and heredocs are preserved.
 
 The request is serialized as JSON so strings cannot create fake transcript roles. It excludes agent prose and tool results, but arguments and repository metadata remain potential prompt-injection inputs. Model review is not a security boundary.
 
-User messages and arguments are never clipped or silently dropped. If the complete request and operator policy exceed 60,000 characters, Auto Mode asks you instead of reviewing partial context. This can increase human prompts in long sessions.
+The system prompt and request together are bounded to 60,000 characters. All user messages on the current branch, the operator policy, environment evidence and the exact pending call are retained intact. Historical tool calls fill the remaining budget newest-first; if the next call does not fit, selection stops rather than showing fragments or skipping to older calls.
+
+Omitted tool calls are explicitly marked as unknown evidence. The reviewer must ask you if the pending action depends on missing history, such as the contents of a previously written script. Self-contained read-only operations can still be reviewed in tool-heavy long sessions. If user messages, policy, environment or the pending call alone exceed the budget, Auto Mode still asks you; it never silently drops a user restriction or clips executable code.
 
 ## Configuration
 

@@ -6,7 +6,7 @@ import type {
 } from "@oh-my-pi/pi-coding-agent";
 import { buildTranscript, findPendingCall, type PendingCall } from "./context.ts";
 import { environmentFacts, git } from "./environment.ts";
-import { fileGuardReason } from "./file-guard.ts";
+import { directoryGrantTargets, fileGuardReason } from "./file-guard.ts";
 import { loadOperatorPolicy, review, type CompleteReview, type OperatorPolicy } from "./reviewer.ts";
 
 const PATCHED = Symbol.for("omp.llm-approval-reviewer");
@@ -21,6 +21,7 @@ interface Session {
 	policyFile: string;
 	agentDir: string;
 	remotes: string | undefined;
+	writeDirectories: string[];
 }
 export interface Dependencies {
 	complete: CompleteReview;
@@ -62,7 +63,7 @@ export default function installAutoMode(pi: ExtensionAPI, dependencies: Dependen
 			initialized = Promise.all([
 				(dependencies.loadPolicy ?? loadOperatorPolicy)(policyFile),
 				(dependencies.git ?? git)(ctx.cwd, ["remote", "-v"]),
-			]).then(([policy, remotes]) => ({ policy, remotes, policyFile, agentDir }));
+			]).then(([policy, remotes]) => ({ policy, remotes, policyFile, agentDir, writeDirectories: [] }));
 			// Store the promise immediately: concurrent events must share the startup snapshot.
 			sessions.set(id, initialized);
 		}
@@ -147,6 +148,7 @@ export default function installAutoMode(pi: ExtensionAPI, dependencies: Dependen
 		return {
 			cwd: ctx.cwd, home: os.homedir(), inspectEdits: dependencies.inspectEdits,
 			protectedPaths: [state.policyFile, state.agentDir, path.join(os.homedir(), ".omp"), dependencies.extensionRoot],
+			allowedWriteDirectories: state.writeDirectories,
 		};
 	}
 
@@ -171,9 +173,28 @@ export default function installAutoMode(pi: ExtensionAPI, dependencies: Dependen
 		const state = await session(ctx);
 		const guard = await fileGuardReason(event.toolName, event.input, guardOptions(ctx, state));
 		if (!guard) return;
-		const patch = patchUI(ctx);
+		patchUI(ctx);
 		const full = `Allow tool: ${event.toolName}\nAuto mode file guard: ${guard}\n\nOriginal arguments (untrusted data):\n${JSON.stringify(event.input, null, 2)}`;
-		const answer = await patch.askHuman({ full, compact: full });
-		if (answer !== "once") return { block: true, reason: `Auto mode file guard: ${guard}; user did not approve this call` };
+		const directories = await directoryGrantTargets(event.toolName, event.input, guardOptions(ctx, state));
+		const directoryChoice = directories.length
+			? `Allow ordinary writes for this session: ${directories.join(", ")}`
+			: undefined;
+		// Use this handler's scoped dialog: OMP pauses its 30s execution budget
+		// while the user answers. The cached raw approval gate bypasses that pause.
+		pi.events.emit("herdr:blocked", { active: true, label: `Allow tool: ${event.toolName}` });
+		let answer: string | undefined;
+		try { answer = await ctx.ui.select(full, ["Approve", ...(directoryChoice ? [directoryChoice] : []), "Deny"]); }
+		finally { pi.events.emit("herdr:blocked", { active: false }); }
+		if (directoryChoice && answer === directoryChoice) {
+			// Re-check after the dialog: paths or symlinks may have changed while it was open.
+			const reason = await fileGuardReason(event.toolName, event.input, {
+				...guardOptions(ctx, state), allowedWriteDirectories: [...state.writeDirectories, ...directories],
+			});
+			if (reason) return { block: true, reason: `Auto mode directory grant rejected: ${reason}` };
+			state.writeDirectories = [...new Set([...state.writeDirectories, ...directories])];
+			ctx.ui.notify(`Auto mode: ordinary writes allowed for this session in ${directories.join(", ")}; sensitive and protected files still require approval`, "info");
+			return;
+		}
+		if (answer !== "Approve") return { block: true, reason: `Auto mode file guard: ${guard}; user did not approve this call` };
 	});
 }

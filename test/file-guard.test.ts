@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { canonicalize, fileGuardReason, type FileGuardOptions } from "../src/file-guard.ts";
+import { canonicalize, directoryGrantTargets, fileGuardReason, type FileGuardOptions } from "../src/file-guard.ts";
 
 let root: string;
 let options: FileGuardOptions;
@@ -86,5 +86,47 @@ describe("file tool guards", () => {
 	test("does not interpret unsupported local URLs or selector forms as safe paths", async () => {
 		expect(await fileGuardReason("read", { path: "local://host/.env" }, options)).toBeDefined();
 		expect(await fileGuardReason("read", { path: ".env:unknown-selector" }, options)).toBeDefined();
+	});
+	test("directory grants cover ordinary descendants but not secrets, siblings or protected code", async () => {
+		const directory = path.join(root, "scratch");
+		expect(await directoryGrantTargets("write", { path: path.join(directory, "first.py") }, options)).toEqual([directory]);
+		options.allowedWriteDirectories = [directory];
+		expect(await fileGuardReason("write", { path: path.join(directory, "nested/next.py") }, options)).toBeUndefined();
+		expect(await fileGuardReason("write", { path: directory + "-other/file.py" }, options)).toContain("outside");
+		expect(await fileGuardReason("write", { path: path.join(directory, ".env") }, options)).toContain("secrets");
+		expect(await fileGuardReason("write", { path: path.join(directory, ".git/config") }, options)).toContain("configuration");
+		options.protectedPaths.push(path.join(directory, "plugin"));
+		expect(await directoryGrantTargets("write", { path: path.join(directory, "plugin/index.ts") }, options)).toEqual([]);
+		expect(await fileGuardReason("write", { path: path.join(directory, "plugin/index.ts") }, options)).toContain("extension code");
+		options.inspectEdits = () => [path.join(directory, "ordinary.ts"), path.join(options.cwd, ".env")];
+		expect(await directoryGrantTargets("edit", { input: "patch" }, options)).toEqual([]);
+		expect(await directoryGrantTargets("write", { path: path.join(options.home, "file") }, options)).toEqual([]);
+	});
+
+	test("grants cannot follow links outside their scope or retargeted directory roots", async () => {
+		const directory = path.join(root, "scratch");
+		await mkdir(directory);
+		options.allowedWriteDirectories = [directory];
+		await symlink(options.home, path.join(directory, "alias"));
+		const target = { path: path.join(directory, "alias/new.py") };
+		expect(await fileGuardReason("write", target, options)).toContain("outside");
+		expect(await directoryGrantTargets("write", target, options)).toEqual([]);
+		await rm(directory, { recursive: true });
+		await symlink(options.home, directory);
+		expect(await fileGuardReason("write", { path: path.join(directory, "new.py") }, options)).toContain("outside");
+	});
+
+	test("only the plugin manifest is exempt from protected-state reads, not secret symlinks", async () => {
+		const plugins = path.join(options.home, ".omp/plugins");
+		await mkdir(plugins, { recursive: true });
+		const manifest = path.join(plugins, "package.json");
+		await writeFile(manifest, '{"dependencies":{}}');
+		expect(await fileGuardReason("read", { path: manifest + ":1-100" }, options)).toBeUndefined();
+		expect(await fileGuardReason("read", { path: path.join(options.home, ".omp/agent/agent.db") }, options)).toContain("secrets");
+		expect(await fileGuardReason("write", { path: manifest }, options)).toContain("configuration");
+		await rm(manifest);
+		await writeFile(path.join(options.home, ".env"), "placeholder");
+		await symlink(path.join(options.home, ".env"), manifest);
+		expect(await fileGuardReason("read", { path: manifest }, options)).toContain("secrets");
 	});
 });
