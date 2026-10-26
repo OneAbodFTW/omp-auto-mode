@@ -1,16 +1,16 @@
 {
   "name": "omp-auto-mode",
-  "version": "0.1.2",
+  "version": "0.1.0",
   "description": "Auto mode for oh-my-pi: an LLM answers the tool-approval prompts it can clearly allow and hands every other one back to you.",
   "type": "module",
   "license": "MIT",
   "author": "OneAbodFTW",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lialzm/omp-auto-mode.git"
+    "url": "git+https://github.com/OneAbodFTW/omp-auto-mode.git"
   },
-  "homepage": "https://github.com/lialzm/omp-auto-mode#readme",
-  "bugs": "https://github.com/lialzm/omp-auto-mode/issues",
+  "homepage": "https://github.com/OneAbodFTW/omp-auto-mode#readme",
+  "bugs": "https://github.com/OneAbodFTW/omp-auto-mode/issues",
   "keywords": [
     "omp",
     "oh-my-pi",

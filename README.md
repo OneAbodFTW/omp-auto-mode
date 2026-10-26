@@ -7,12 +7,10 @@ Auto mode for [oh-my-pi](https://github.com/can1357/oh-my-pi). When omp asks you
 
 The reviewer can only allow. Every call it does not clearly allow comes back to you. File guards also ask you directly before sensitive file access, including calls OMP's approval mode would otherwise allow without a prompt.
 
-This fork of [OneAbodFTW/omp-auto-mode](https://github.com/OneAbodFTW/omp-auto-mode) bounds historical tool evidence without clipping user restrictions or pending calls. It also preserves OMP's paused handler budget while a file-guard dialog waits for the user.
-
 ## Install
 
 ```sh
-omp plugin install github:lialzm/omp-auto-mode
+omp plugin install github:OneAbodFTW/omp-auto-mode
 ```
 
 Needs omp 18.12.6 or newer. Auto mode reviews the prompts omp already raises, so use an approval mode that asks, for example:
@@ -105,30 +103,6 @@ bun run check
 ```
 
 Tests use fake model completions and temporary files; no API keys or model requests are needed. `check` builds the extension with host-provided OMP packages left external. Runtime compatibility should also be checked in OMP when changing approval hooks or native edit parsing.
-
-To develop this fork, clone it outside `~/.omp` (that directory is protected agent state), then link the checkout:
-
-```sh
-git clone https://github.com/lialzm/omp-auto-mode.git
-cd omp-auto-mode
-bun test
-bun run check
-omp plugin install "$PWD"
-```
-
-The link loads local source changes in new OMP processes. Existing sessions retain their loaded code until their extensions are reloaded or the OMP process is restarted. Do not run the original and modified reviewers together. Before replacing an installation, keep a copy of its directory; `omp plugin install /absolute/path/to/backup` switches back without changing approval rules.
-
-### 0.1.2
-
-- Offer explicit session-scoped directory permission for ordinary external writes, without changing the meaning of one-call approval or bypassing sensitive paths and native policies.
-- Allow reading the exact plugin dependency manifest without treating all OMP state as public.
-
-### 0.1.1
-
-- Bound historical tool evidence while preserving every user instruction and complete pending payload; include omission counts and require escalation when omitted evidence matters.
-- Count the system prompt in the input budget and distinguish oversized protected context from oversized environment evidence.
-- Route file-guard questions through OMP's handler-scoped dialog, allowing human answers after more than 30 seconds.
-
 
 ## License
 
